@@ -1,0 +1,89 @@
+# build.yml.template
+# Copiar a .gitea/workflows/build.yml en cada proyecto.
+# Cambiar solo las variables en la sección "env".
+
+name: Android CI
+
+on:
+  push:
+    branches: [main]
+
+env:
+  APP_NAME: "NombreApp"                        # <-- CAMBIAR
+  GOTIFY_URL: "http://192.168.88.100:8088"     # <-- ajustar si cambia
+  GOTIFY_TOKEN: ${{ secrets.GOTIFY_TOKEN }}    # secret en Gitea → Settings → Secrets
+
+jobs:
+  build:
+    runs-on: self-hosted
+
+    container:
+      image: android-builder:latest
+      options: --add-host=gitea:192.168.88.100
+      volumes:
+        - gradle-cache:/root/.gradle
+        - sdk-cache:/opt/android-sdk
+
+    steps:
+      - name: Debug network
+        run: |
+          cat /etc/hosts
+          cat /etc/resolv.conf
+          ping -c1 192.168.88.100 || true
+          curl -v http://192.168.88.100:3000 || true
+          
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Genera local.properties con el SDK path del container
+      - name: Setup local.properties
+        run: echo "sdk.dir=$ANDROID_HOME" > local.properties
+
+      # Si el proyecto no tiene gradlew commiteado, lo genera
+      - name: Ensure Gradle Wrapper
+        run: |
+          if [ ! -f "gradlew" ]; then
+            echo "gradlew no encontrado, generando..."
+            gradle wrapper --gradle-version 8.7
+            chmod +x gradlew
+          fi
+
+      # Descarga todas las dependencias declaradas en build.gradle.kts
+      # sin buildear — sirve para cachear antes del build real
+      - name: Fix gradlew permissions
+        run: chmod +x gradlew
+        
+      - name: Download Dependencies
+        run: ./gradlew dependencies --no-daemon -q || true
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Unit Tests
+        run: ./gradlew test --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v3
+        if: success()
+        with:
+          name: ${{ env.APP_NAME }}-debug-${{ github.sha }}
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 14
+
+      - name: Notify Success
+        if: success()
+        run: |
+          COMMIT_MSG=$(git log -1 --pretty='%s')
+          curl -s -X POST "$GOTIFY_URL/message?token=$GOTIFY_TOKEN" \
+            -F "title=$APP_NAME CI ✅" \
+            -F "message=Build OK — $COMMIT_MSG" \
+            -F "priority=5"
+
+      - name: Notify Failure
+        if: failure()
+        run: |
+          COMMIT_MSG=$(git log -1 --pretty='%s')
+          curl -s -X POST "$GOTIFY_URL/message?token=$GOTIFY_TOKEN" \
+            -F "title=$APP_NAME CI ❌" \
+            -F "message=Build FAILED — $COMMIT_MSG" \
+            -F "priority=8"

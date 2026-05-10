@@ -1,0 +1,70 @@
+
+
+# Android CI Pipeline
+# Servicios: Gitea + Gitea Runner + Android Builder
+# El builder NO corre como servicio permanente — se usa como imagen de los jobs CI.
+
+services:
+
+  gitea:
+    image: gitea/gitea:latest
+    container_name: gitea
+    restart: unless-stopped
+    environment:
+      - USER_UID=1000
+      - USER_GID=1000
+      - GITEA__server__ROOT_URL=http://192.168.88.100:3000
+      - GITEA__server__HTTP_PORT=3000
+    volumes:
+      - gitea-data:/data
+    ports:
+      - "3000:3000"
+      - "222:22"
+    networks:
+      - TuRed
+
+  gitea-runner:
+    image: gitea/act_runner:latest
+    container_name: gitea-runner
+    restart: unless-stopped
+    depends_on:
+      - gitea
+    environment:
+      # Registrar con: docker exec gitea-runner act_runner register
+      - GITEA_INSTANCE_URL=http://gitea:3000
+      - GITEA_RUNNER_NAME=homelab-runner
+      # CONFIG_FILE apunta al config montado en volumen
+      # - CONFIG_FILE=/data/config.yaml
+      - GITEA_RUNNER_REGISTRATION_TOKEN=
+      - HOME=/data
+    volumes:
+      - runner-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock  # para lanzar containers de build
+    networks:
+      - TuRed
+
+  # android-builder NO es un servicio permanente.
+  # Solo se usa para construir la imagen: docker compose build android-builder
+  # El runner la referencia como imagen en los workflows.
+  android-builder:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: android-builder:latest   # nombre de imagen que usarán los workflows
+    profiles:
+      - build-only                  # no arranca con docker compose up
+    volumes:
+      - gradle-cache:/root/.gradle
+      - sdk-cache:/opt/android-sdk
+    networks:
+      - TuRed
+
+volumes:
+  gitea-data:
+  runner-data:
+  gradle-cache:
+  sdk-cache:
+
+networks:
+  TuRed:
+    external: true
