@@ -4,3 +4,11 @@ docker-compose.yml
 README.md.github
 
 README.md.codeberg
+
+backup_stack.sh
+
+android.edit
+
+android.list
+
+*.bak
